@@ -69,35 +69,58 @@ function fallbackRuleParser(
   let newCreatedCount = 0;
 
   for (const line of lines) {
-    // Check if line starts with an ID update: e.g. "9186 已完成", "9184 大客户送礼 进行中", "9221 完成"
-    const idStatusMatch = line.match(/^(\d{3,6})\s*(.*)$/);
-    if (idStatusMatch) {
-      const targetId = idStatusMatch[1];
-      const remainder = idStatusMatch[2].trim();
+    const flexibleIdMatch = line.match(/(?:任务|#|＃|更新|将|把)?\s*(\d{3,6})\s*(.*)/i);
+    let targetId: string | null = null;
+    let remainder = '';
+
+    if (flexibleIdMatch) {
+      targetId = flexibleIdMatch[1];
+      remainder = flexibleIdMatch[2].trim();
+    } else {
+      const foundTask = existingTasks.find((t) => {
+        const cId = t.id.replace(/\D/g, '');
+        return (cId && line.includes(cId)) || (t.title && line.includes(t.title));
+      });
+      if (foundTask) {
+        targetId = foundTask.id.replace(/\D/g, '');
+        remainder = line
+          .replace(new RegExp(`(?:任务|#|＃|更新|将|把)?\\s*${targetId}`, 'i'), '')
+          .replace(foundTask.title, '')
+          .trim();
+      }
+    }
+
+    const hasStatusKeyword = /已完成|完成|做完|搞定|核销|已做|进行中|在做|跟进中|处理中|未开始|待办|未做/.test(line);
+
+    if (targetId && (hasStatusKeyword || remainder.length > 0)) {
       isUpdateAction = true;
 
       let newStatus: "未开始" | "进行中" | "已完成" = "进行中";
       let completedAt: string | null = null;
 
-      if (/已完成|完成|做完|搞定|核销|已做/.test(remainder)) {
+      if (/已完成|完成|做完|搞定|核销|已做/.test(line)) {
         newStatus = "已完成";
         completedAt = baseDate;
-      } else if (/进行中|在做|跟进中|处理中/.test(remainder)) {
+      } else if (/进行中|在做|跟进中|处理中/.test(line)) {
         newStatus = "进行中";
-      } else if (/未开始|待办|未做/.test(remainder)) {
+      } else if (/未开始|待办|未做/.test(line)) {
         newStatus = "未开始";
       }
 
-      // Find existing task
-      const existing = existingTasks.find((t) => t.id === targetId);
+      const existing = existingTasks.find(
+        (t) => t.id.replace(/\D/g, '') === targetId || (t.title && line.includes(t.title))
+      );
       const cleanTitle =
         remainder
-          .replace(/已完成|完成|做完|搞定|核销|进行中|在做|跟进中|未开始|待办/g, "")
-          .trim() || (existing ? existing.title : `任务 ${targetId}`);
+          .replace(/(?:更新|将|把|状态|改为|标记为|为)/g, '')
+          .replace(/已完成|完成|做完|搞定|核销|已做|进行中|在做|跟进中|处理中|未开始|待办|未做/g, '')
+          .replace(/[,，;；\s]+$/, '')
+          .replace(/^[,，;；\s]+/, '')
+          .trim();
 
       tasks.push({
         id: targetId,
-        title: existing ? existing.title : cleanTitle,
+        title: cleanTitle && cleanTitle.length > 1 ? cleanTitle : existing ? existing.title : `任务 ${targetId}`,
         priority: existing ? existing.priority : "中",
         deadline: existing ? existing.deadline : "当天",
         status: newStatus,

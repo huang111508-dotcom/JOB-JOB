@@ -52,33 +52,58 @@ function fallbackRuleParser(
   let newCreatedCount = 0;
 
   for (const line of lines) {
-    const idStatusMatch = line.match(/^(\d{3,6})\s*(.*)$/);
-    if (idStatusMatch) {
-      const targetId = idStatusMatch[1];
-      const remainder = idStatusMatch[2].trim();
+    const flexibleIdMatch = line.match(/(?:任务|#|＃|更新|将|把)?\s*(\d{3,6})\s*(.*)/i);
+    let targetId: string | null = null;
+    let remainder = '';
+
+    if (flexibleIdMatch) {
+      targetId = flexibleIdMatch[1];
+      remainder = flexibleIdMatch[2].trim();
+    } else {
+      const foundTask = existingTasks.find((t) => {
+        const cId = t.id.replace(/\D/g, '');
+        return (cId && line.includes(cId)) || (t.title && line.includes(t.title));
+      });
+      if (foundTask) {
+        targetId = foundTask.id.replace(/\D/g, '');
+        remainder = line
+          .replace(new RegExp(`(?:任务|#|＃|更新|将|把)?\\s*${targetId}`, 'i'), '')
+          .replace(foundTask.title, '')
+          .trim();
+      }
+    }
+
+    const hasStatusKeyword = /已完成|完成|做完|搞定|核销|已做|进行中|在做|跟进中|处理中|未开始|待办|未做/.test(line);
+
+    if (targetId && (hasStatusKeyword || remainder.length > 0)) {
       isUpdateAction = true;
 
       let newStatus: '未开始' | '进行中' | '已完成' = '进行中';
       let completedAt: string | null = null;
 
-      if (/已完成|完成|做完|搞定|核销|已做/.test(remainder)) {
+      if (/已完成|完成|做完|搞定|核销|已做/.test(line)) {
         newStatus = '已完成';
         completedAt = baseDate;
-      } else if (/进行中|在做|跟进中|处理中/.test(remainder)) {
+      } else if (/进行中|在做|跟进中|处理中/.test(line)) {
         newStatus = '进行中';
-      } else if (/未开始|待办|未做/.test(remainder)) {
+      } else if (/未开始|待办|未做/.test(line)) {
         newStatus = '未开始';
       }
 
-      const existing = existingTasks.find((t) => t.id === targetId);
+      const existing = existingTasks.find(
+        (t) => t.id.replace(/\D/g, '') === targetId || (t.title && line.includes(t.title))
+      );
       const cleanTitle =
         remainder
-          .replace(/已完成|完成|做完|搞定|核销|进行中|在做|跟进中|未开始|待办/g, '')
-          .trim() || (existing ? existing.title : `任务 ${targetId}`);
+          .replace(/(?:更新|将|把|状态|改为|标记为|为)/g, '')
+          .replace(/已完成|完成|做完|搞定|核销|已做|进行中|在做|跟进中|处理中|未开始|待办|未做/g, '')
+          .replace(/[,，;；\s]+$/, '')
+          .replace(/^[,，;；\s]+/, '')
+          .trim();
 
       tasks.push({
         id: targetId,
-        title: existing ? existing.title : cleanTitle,
+        title: cleanTitle && cleanTitle.length > 1 ? cleanTitle : existing ? existing.title : `任务 ${targetId}`,
         priority: existing ? existing.priority : '中',
         deadline: existing ? existing.deadline : '当天',
         status: newStatus,
@@ -224,15 +249,15 @@ ${JSON.stringify(existingTasks, null, 2)}
 
 # Parsing Rules
 1. 任务字段提取：
-   - id (string): 任务编号。若是更新/核销旧任务，直接沿用原编号；若是新增任务，按照“MMD + 序号”生成（请根据上下文最大的序号递增，无历史序号则从 1 开始）。
-   - title (string): 任务具体内容，去除日期、优先级等修饰词后的核心描述。
-   - priority (string): 优先级。仅限 "高", "中", "低"。若用户未显式说明，默认值一律为 "中"。
+   - id (string): 任务编号，纯数字字符串（例如 "9221"，切勿包含 "#" 或 "任务" 前缀）。若是更新/核销旧任务，请比对已有任务列表匹配其原 id（即使用户在自然语言中提到了任务标题，也请匹配已有任务中的 id 并沿用原 title）；若是新增任务，按照“MMD + 序号”生成（根据上下文最大的序号递增）。
+   - title (string): 任务具体内容，去除日期、优先级等修饰词后的核心描述。若是更新状态指令且用户未修改标题，务必沿用已有任务的完整 title。
+   - priority (string): 优先级。仅限 "高", "中", "低"。若用户未显式说明，沿用已有任务或默认为 "中"。
    - deadline (string): 截止日期。格式化为标准格式（如 "YYYY-MM-DD"）或规范缩写（如 "当天"、"9.25"）。若用户未显式说明，默认值一律为 "当天"。
    - status (string): 任务状态。仅限 "未开始", "进行中", "已完成"。新增任务默认为 "未开始"；若用户指定为进行中或已完成，则如实记录。
    - completed_at (string | null): 若状态为“已完成”，记录完成日期（如 "${today}"）；否则为 null。
 2. 意图判断 (action)：
    - "CREATE": 新建任务
-   - "UPDATE_STATUS": 更新状态/核销现有任务
+   - "UPDATE_STATUS": 更新状态/核销现有任务（用户提到已有任务编号或已有任务名称变更状态时）
    - "QUERY": 纯查看/统计指令
 `;
 

@@ -3,14 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Header } from './components/Header';
 import { TaskInput } from './components/TaskInput';
 import { TaskList } from './components/TaskList';
 import { PasswordLock } from './components/PasswordLock';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { ParseResult, TaskItem, TaskStatus } from './types';
-import { parseTasksLocally } from './utils/taskParser';
+import {
+  parseTasksLocally,
+  cleanTaskId,
+  compareTaskIds,
+  getDayPrefix,
+  getNextSequence,
+} from './utils/taskParser';
 import { CheckCircle2, AlertTriangle, Info, Cloud, Lock, Key } from 'lucide-react';
 import { db } from './firebase';
 import {
@@ -18,7 +24,6 @@ import {
   onSnapshot,
   doc,
   setDoc,
-  updateDoc,
   deleteDoc,
   getDocs,
 } from 'firebase/firestore';
@@ -39,7 +44,15 @@ function hashString(str: string): string {
 }
 
 export default function App() {
-  const currentDate = '2026-09-22';
+  const currentDate = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
+
+  const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null);
 
   // 认证状态管理：支持记住密码，输入一次后本机永久免密
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -113,9 +126,13 @@ export default function App() {
           if (!snapshot.empty) {
             const remoteTasks: TaskItem[] = [];
             snapshot.forEach((d) => {
-              remoteTasks.push(d.data() as TaskItem);
+              const data = d.data() as TaskItem;
+              remoteTasks.push({
+                ...data,
+                id: cleanTaskId(data.id || d.id),
+              });
             });
-            remoteTasks.sort((a, b) => b.id.localeCompare(a.id));
+            remoteTasks.sort((a, b) => compareTaskIds(a.id, b.id));
             setTasks(remoteTasks);
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteTasks));
@@ -220,62 +237,145 @@ export default function App() {
       }
 
       if (result.action === 'CREATE') {
-        const newItems: TaskItem[] = result.tasks.map((t) => ({
-          ...t,
-          created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        }));
+        const newItems: TaskItem[] = result.tasks.map((t) => {
+          const cId = cleanTaskId(t.id);
+          return {
+            ...t,
+            id: cId,
+            status: t.status || '未开始',
+            completed_at: t.status === '已完成' ? (t.completed_at || currentDate) : null,
+            created_at: t.created_at || new Date().toISOString().replace('T', ' ').slice(0, 16),
+          };
+        });
 
         setTasks((prev) => {
-          const existingIds = new Set(prev.map((i) => i.id));
-          const filteredNew = newItems.filter((i) => !existingIds.has(i.id));
-          return [...filteredNew, ...prev];
+          const newMap = new Map(newItems.map((n) => [cleanTaskId(n.id), n]));
+          const updatedPrev = prev.map((item) => {
+            const cId = cleanTaskId(item.id);
+            return newMap.has(cId) ? { ...item, ...newMap.get(cId)! } : item;
+          });
+          const existingIds = new Set(prev.map((i) => cleanTaskId(i.id)));
+          const completelyNew = newItems.filter((i) => !existingIds.has(cleanTaskId(i.id)));
+          const combined = [...completelyNew, ...updatedPrev];
+          combined.sort((a, b) => compareTaskIds(a.id, b.id));
+          return combined;
         });
+
+        if (newItems.length > 0) {
+          setRecentlyUpdatedId(newItems[0].id);
+          setTimeout(() => setRecentlyUpdatedId(null), 3500);
+        }
 
         for (const item of newItems) {
           try {
-            await setDoc(doc(db, 'tasks', item.id), item);
+            await setDoc(doc(db, 'tasks', item.id), item, { merge: true });
           } catch (cloudErr) {
             console.warn('[Firebase] Firestore write note:', cloudErr);
           }
         }
 
-        showNotification(`已新增 ${result.tasks.length} 项任务，已存入云端数据库！`, 'success');
+        const ids = newItems.map((t) => `#${t.id}`).join('、');
+        showNotification(`已新增任务 ${ids}，已存入云端数据库！`, 'success');
       } else if (result.action === 'UPDATE_STATUS') {
-        const updateMap = new Map(result.tasks.map((t) => [t.id, t]));
+        const idMap = new Map<string, TaskItem>();
+        const titleMap = new Map<string, TaskItem>();
+
+        result.tasks.forEach((t) => {
+          const cId = cleanTaskId(t.id);
+          const normalized = { ...t, id: cId };
+          if (cId) idMap.set(cId, normalized);
+          if (t.title) titleMap.set(t.title.trim().toLowerCase(), normalized);
+        });
+
+        const matchedIds = new Set<string>();
 
         setTasks((prev) => {
-          return prev.map((item) => {
-            if (updateMap.has(item.id)) {
-              const updated = updateMap.get(item.id)!;
+          const nextTasks = prev.map((item) => {
+            const cId = cleanTaskId(item.id);
+            const titleKey = item.title.trim().toLowerCase();
+            const updateData = idMap.get(cId) || titleMap.get(titleKey);
+
+            if (updateData) {
+              matchedIds.add(cId);
+              const targetStatus = updateData.status || item.status;
+              const completedAt =
+                targetStatus === '已完成'
+                  ? updateData.completed_at || currentDate
+                  : null;
+
               return {
                 ...item,
-                status: updated.status,
-                completed_at:
-                  updated.status === '已完成'
-                    ? updated.completed_at || currentDate
-                    : null,
-                priority: updated.priority || item.priority,
-                deadline: updated.deadline || item.deadline,
+                title:
+                  updateData.title &&
+                  updateData.title !== `任务 ${cId}` &&
+                  updateData.title !== `任务 ${item.id}`
+                    ? updateData.title
+                    : item.title,
+                status: targetStatus,
+                completed_at: completedAt,
+                priority: updateData.priority || item.priority,
+                deadline: updateData.deadline || item.deadline,
               };
             }
             return item;
           });
+
+          // If any updated task didn't exist in prev, insert it at the beginning so it is never lost
+          for (const t of result.tasks) {
+            const cId = cleanTaskId(t.id);
+            if (!matchedIds.has(cId) && !prev.some((p) => cleanTaskId(p.id) === cId)) {
+              nextTasks.unshift({
+                id: cId || getNextSequence(getDayPrefix(currentDate), prev),
+                title: t.title || `任务 ${cId}`,
+                priority: t.priority || '中',
+                deadline: t.deadline || '当天',
+                status: t.status || '未开始',
+                completed_at: t.status === '已完成' ? (t.completed_at || currentDate) : null,
+                created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
+              });
+            }
+          }
+
+          nextTasks.sort((a, b) => compareTaskIds(a.id, b.id));
+          return nextTasks;
         });
 
+        // Highlight the updated task in the table
+        const firstUpdated = result.tasks[0];
+        if (firstUpdated) {
+          const firstId = cleanTaskId(firstUpdated.id);
+          setRecentlyUpdatedId(firstId);
+          setTimeout(() => setRecentlyUpdatedId(null), 3500);
+        }
+
+        // 异步更新到 Firebase Firestore 云端数据库
         for (const t of result.tasks) {
+          const cId = cleanTaskId(t.id);
+          if (!cId) continue;
           try {
             const completedAt = t.status === '已完成' ? (t.completed_at || currentDate) : null;
-            await updateDoc(doc(db, 'tasks', t.id), {
-              status: t.status,
-              completed_at: completedAt,
-            });
+            await setDoc(
+              doc(db, 'tasks', cId),
+              {
+                id: cId,
+                status: t.status,
+                completed_at: completedAt,
+                ...(t.title && !t.title.startsWith('任务 ') ? { title: t.title } : {}),
+                ...(t.priority ? { priority: t.priority } : {}),
+                ...(t.deadline ? { deadline: t.deadline } : {}),
+              },
+              { merge: true }
+            );
           } catch (cloudErr) {
             console.warn('[Firebase] Firestore update note:', cloudErr);
           }
         }
 
-        const updatedIds = result.tasks.map((t) => `#${t.id}`).join('、');
-        showNotification(`已更新任务 ${updatedIds} 状态并同步到云端！`, 'success');
+        const updatedIds = result.tasks
+          .map((t) => `#${cleanTaskId(t.id)}`)
+          .filter(Boolean)
+          .join('、');
+        showNotification(`已更新任务 ${updatedIds || '明细'} 状态并同步到云端！`, 'success');
       } else if (result.action === 'QUERY') {
         showNotification(`查询指令已识别，共匹配 ${result.tasks.length} 条记录`, 'info');
       }
@@ -289,11 +389,12 @@ export default function App() {
 
   // 4. 状态变更（含核销）并推送到 Firestore
   const handleUpdateStatus = async (taskId: string, newStatus: TaskStatus) => {
+    const cId = cleanTaskId(taskId);
     const completedAt = newStatus === '已完成' ? currentDate : null;
 
     setTasks((prev) =>
       prev.map((t) => {
-        if (t.id === taskId) {
+        if (cleanTaskId(t.id) === cId) {
           return {
             ...t,
             status: newStatus,
@@ -304,30 +405,39 @@ export default function App() {
       })
     );
 
+    setRecentlyUpdatedId(cId);
+    setTimeout(() => setRecentlyUpdatedId(null), 3500);
+
     try {
-      await updateDoc(doc(db, 'tasks', taskId), {
-        status: newStatus,
-        completed_at: completedAt,
-      });
+      await setDoc(
+        doc(db, 'tasks', cId),
+        {
+          id: cId,
+          status: newStatus,
+          completed_at: completedAt,
+        },
+        { merge: true }
+      );
     } catch (cloudErr) {
       console.warn('[Firebase] Firestore status update note:', cloudErr);
     }
 
     showNotification(
-      `任务 #${taskId} 已更新为「${newStatus}」${newStatus === '已完成' ? '（已核销）' : ''}`,
+      `任务 #${cId} 已更新为「${newStatus}」${newStatus === '已完成' ? '（已核销）' : ''}`,
       'success'
     );
   };
 
   // 5. 删除任务并从 Firestore 移除
   const handleDeleteTask = async (taskId: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    const cId = cleanTaskId(taskId);
+    setTasks((prev) => prev.filter((t) => cleanTaskId(t.id) !== cId));
     try {
-      await deleteDoc(doc(db, 'tasks', taskId));
+      await deleteDoc(doc(db, 'tasks', cId));
     } catch (cloudErr) {
       console.warn('[Firebase] Firestore delete note:', cloudErr);
     }
-    showNotification(`已删除任务 #${taskId}`, 'info');
+    showNotification(`已删除任务 #${cId}`, 'info');
   };
 
   // 如果未认证，显示安全密码验证锁屏组件
@@ -404,6 +514,7 @@ export default function App() {
           tasks={tasks}
           onUpdateStatus={handleUpdateStatus}
           onDeleteTask={handleDeleteTask}
+          recentlyUpdatedId={recentlyUpdatedId}
         />
       </main>
 

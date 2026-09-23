@@ -8,18 +8,21 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { TaskItem, TaskStatus } from '../types';
+import { compareTaskIds } from '../utils/taskParser';
 
 interface TaskListProps {
   tasks: TaskItem[];
   onUpdateStatus: (taskId: string, newStatus: TaskStatus) => void;
   onDeleteTask: (taskId: string) => void;
+  recentlyUpdatedId?: string | null;
 }
 
 // 格式化截止日期为月日形式（例如 9.22、9.25）
 function formatShortDate(deadline: string): string {
   if (!deadline) return '-';
   if (deadline === '当天') {
-    return '9.22';
+    const now = new Date();
+    return `${now.getMonth() + 1}.${now.getDate()}`;
   }
   const match = deadline.match(/(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})/);
   if (match) {
@@ -33,12 +36,14 @@ function formatShortDate(deadline: string): string {
 export const TaskList: React.FC<TaskListProps> = ({
   tasks,
   onUpdateStatus,
+  recentlyUpdatedId,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'全部' | TaskStatus>('全部');
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
+    const sorted = [...tasks].sort((a, b) => compareTaskIds(a.id, b.id));
+    return sorted.filter((task) => {
       if (statusFilter !== '全部' && task.status !== statusFilter) return false;
       if (searchQuery.trim()) {
         const query = searchQuery.trim().toLowerCase();
@@ -174,11 +179,16 @@ export const TaskList: React.FC<TaskListProps> = ({
               filteredTasks.map((task) => {
                 const isDone = task.status === '已完成';
                 const shortDate = formatShortDate(task.deadline);
+                const isJustUpdated = recentlyUpdatedId && (task.id === recentlyUpdatedId || `#${task.id}` === recentlyUpdatedId);
                 return (
                   <div
                     key={task.id}
-                    className={`group flex items-center gap-1.5 sm:gap-2 px-2.5 py-2 text-xs transition-colors hover:bg-slate-50 ${
-                      isDone ? 'bg-slate-50/40 opacity-75' : 'bg-white'
+                    className={`group flex items-center gap-1.5 sm:gap-2 px-2.5 py-2 text-xs transition-all duration-300 hover:bg-slate-50 ${
+                      isJustUpdated
+                        ? 'bg-blue-50/80 ring-2 ring-blue-400 ring-inset'
+                        : isDone
+                        ? 'bg-slate-50/40 opacity-75'
+                        : 'bg-white'
                     }`}
                   >
                     {/* 1. 序列号 */}
