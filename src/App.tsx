@@ -53,6 +53,7 @@ export default function App() {
   }, []);
 
   const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
 
   // 认证状态管理：支持记住密码，输入一次后本机永久免密
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -375,7 +376,12 @@ export default function App() {
           .map((t) => `#${cleanTaskId(t.id)}`)
           .filter(Boolean)
           .join('、');
-        showNotification(`已更新任务 ${updatedIds || '明细'} 状态并同步到云端！`, 'success');
+        const hasCompleted = result.tasks.some((t) => t.status === '已完成');
+        if (hasCompleted) {
+          showNotification(`已更新任务 ${updatedIds || '明细'}（已核销任务已归档至历史任务）！`, 'success');
+        } else {
+          showNotification(`已更新任务 ${updatedIds || '明细'} 状态并同步到云端！`, 'success');
+        }
       } else if (result.action === 'QUERY') {
         showNotification(`查询指令已识别，共匹配 ${result.tasks.length} 条记录`, 'info');
       }
@@ -422,10 +428,11 @@ export default function App() {
       console.warn('[Firebase] Firestore status update note:', cloudErr);
     }
 
-    showNotification(
-      `任务 #${cId} 已更新为「${newStatus}」${newStatus === '已完成' ? '（已核销）' : ''}`,
-      'success'
-    );
+    if (newStatus === '已完成') {
+      showNotification(`任务 #${cId} 已核销，已移入历史任务库！`, 'success');
+    } else {
+      showNotification(`任务 #${cId} 已恢复为「${newStatus}」，已重新放回待办明细！`, 'success');
+    }
   };
 
   // 5. 删除任务并从 Firestore 移除
@@ -454,7 +461,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* 顶部标题与4行汇总栏 */}
-      <Header tasks={tasks} />
+      <Header
+        tasks={tasks}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
 
       {/* 提示条 */}
       {notification && (
@@ -509,12 +520,14 @@ export default function App() {
         {/* 指令输入框与提交按钮 */}
         <TaskInput onParse={handleParse} isLoading={isLoading} />
 
-        {/* 任务追踪清单（含 Excel 导出） */}
+        {/* 任务追踪清单（含待办明细与历史任务标签页） */}
         <TaskList
           tasks={tasks}
           onUpdateStatus={handleUpdateStatus}
           onDeleteTask={handleDeleteTask}
           recentlyUpdatedId={recentlyUpdatedId}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
         />
       </main>
 
