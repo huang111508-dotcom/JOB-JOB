@@ -10,6 +10,7 @@ import { TaskList } from './components/TaskList';
 import { PasswordLock } from './components/PasswordLock';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { ParseResult, TaskItem, TaskStatus } from './types';
+import { parseTasksLocally } from './utils/taskParser';
 import { CheckCircle2, AlertTriangle, Info, Cloud, Lock, Key } from 'lucide-react';
 import { db } from './firebase';
 import {
@@ -192,23 +193,31 @@ export default function App() {
   const handleParse = async (userInput: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/parse-tasks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userInput,
-          currentDate,
-          existingTasks: tasks,
-        }),
-      });
+      let result: ParseResult;
 
-      if (!response.ok) {
-        throw new Error(`服务响应异常: ${response.status}`);
+      try {
+        const response = await fetch('/api/parse-tasks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userInput,
+            currentDate,
+            existingTasks: tasks,
+          }),
+        });
+
+        if (response.ok) {
+          result = await response.json();
+        } else {
+          console.warn(`[Parse] API responded with ${response.status}. Using smart local parser.`);
+          result = parseTasksLocally(userInput, currentDate, tasks);
+        }
+      } catch (networkErr) {
+        console.warn('[Parse] Network or serverless route unavailable. Using smart local parser:', networkErr);
+        result = parseTasksLocally(userInput, currentDate, tasks);
       }
-
-      const result: ParseResult = await response.json();
 
       if (result.action === 'CREATE') {
         const newItems: TaskItem[] = result.tasks.map((t) => ({
