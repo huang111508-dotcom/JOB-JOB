@@ -1,0 +1,6 @@
+{
+  "name": "智能任务追踪助理",
+  "description": "智能工作任务追踪与管理助理，将自然语言指令精准解析为标准规范的 JSON 格式，支持任务自增编号、状态核销与云端数据库对接。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
