@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle2, Clock, ListTodo } from 'lucide-react';
 import { TaskItem } from '../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   tasks: TaskItem[];
@@ -18,7 +19,10 @@ export const Header: React.FC<HeaderProps> = ({ tasks }) => {
           <h1 className="text-xl font-bold tracking-tight text-slate-900">
             任务追踪管理
           </h1>
-          <span className="text-xs text-slate-400">智能自然语言解析系统</span>
+          <div className="flex items-center gap-2">
+            <PWAInstallButton />
+            <span className="hidden sm:inline text-xs text-slate-400">智能自然语言解析系统</span>
+          </div>
         </div>
 
         {/* 任务汇总栏：4个模块改为4行 */}

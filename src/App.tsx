@@ -7,9 +7,10 @@ import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { TaskInput } from './components/TaskInput';
 import { TaskList } from './components/TaskList';
+import { PasswordLock } from './components/PasswordLock';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { ParseResult, TaskItem, TaskStatus } from './types';
-import { CheckCircle2, AlertTriangle, Info, Cloud } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Info, Cloud, Lock, Key } from 'lucide-react';
 import { db } from './firebase';
 import {
   collection,
@@ -22,9 +23,48 @@ import {
 } from 'firebase/firestore';
 
 const STORAGE_KEY = 'smart_task_tracker_tasks_v2';
+const AUTH_PASSWORD_KEY = 'smart_task_tracker_pwd_hash';
+const AUTH_TOKEN_KEY = 'smart_task_tracker_auth_token';
+
+// 简单高效的字符串哈希算法
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+  return 'pwd_' + Math.abs(hash).toString(36) + '_' + str.length;
+}
 
 export default function App() {
   const currentDate = '2026-09-22';
+
+  // 认证状态管理：支持记住密码，输入一次后本机永久免密
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
+      const storedPasswordHash = localStorage.getItem(AUTH_PASSWORD_KEY);
+      // 如果之前从未设置过密码，需要先进入设置页
+      if (!storedPasswordHash) {
+        return false;
+      }
+      // 如果已经存储过密码，且本地记住的 Token 匹配密码 Hash，则直接免密通过
+      return storedToken === storedPasswordHash;
+    } catch {
+      return false;
+    }
+  });
+
+  const [hasPasswordSet, setHasPasswordSet] = useState<boolean>(() => {
+    try {
+      return !!localStorage.getItem(AUTH_PASSWORD_KEY);
+    } catch {
+      return false;
+    }
+  });
+
+  const [showChangePwdModal, setShowChangePwdModal] = useState(false);
 
   const [tasks, setTasks] = useState<TaskItem[]>(() => {
     try {
@@ -47,16 +87,16 @@ export default function App() {
 
   // 1. 监听 Firebase Firestore 云端数据库，实现数据实时同步与多端同步
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     let unsubscribe = () => {};
 
     try {
       const tasksColRef = collection(db, 'tasks');
 
-      // 先检查云端是否有历史数据，若云端完全为空则做一次友好初始化种子注入
       getDocs(tasksColRef)
         .then((snapshot) => {
           if (snapshot.empty) {
-            // 云端为空，将初始数据安全写入 Firebase
             INITIAL_TASKS.forEach((t) => {
               setDoc(doc(db, 'tasks', t.id), t).catch(() => {});
             });
@@ -66,7 +106,6 @@ export default function App() {
           console.warn('[Firebase] Initial check note:', err);
         });
 
-      // 实时监听变更
       unsubscribe = onSnapshot(
         tasksColRef,
         (snapshot) => {
@@ -75,7 +114,6 @@ export default function App() {
             snapshot.forEach((d) => {
               remoteTasks.push(d.data() as TaskItem);
             });
-            // 按照编号倒序或创建时间排序
             remoteTasks.sort((a, b) => b.id.localeCompare(a.id));
             setTasks(remoteTasks);
             try {
@@ -86,7 +124,6 @@ export default function App() {
         },
         (error) => {
           console.warn('[Firebase] Firestore onSnapshot warning:', error);
-          // 如果 Firestore 规则尚未配置或网络受限，自动使用本地离线持久化
           setCloudSynced(false);
         }
       );
@@ -96,16 +133,17 @@ export default function App() {
     }
 
     return () => unsubscribe();
-  }, []);
+  }, [isAuthenticated]);
 
   // 2. 本地持久化缓存兜底备份
   useEffect(() => {
+    if (!isAuthenticated) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
     } catch (e) {
       console.error('Failed to save tasks', e);
     }
-  }, [tasks]);
+  }, [tasks, isAuthenticated]);
 
   const showNotification = (
     message: string,
@@ -115,6 +153,39 @@ export default function App() {
     setTimeout(() => {
       setNotification(null);
     }, 3500);
+  };
+
+  // 密码验证逻辑
+  const handleUnlock = (inputPassword: string) => {
+    const currentHash = localStorage.getItem(AUTH_PASSWORD_KEY);
+    const inputHash = hashString(inputPassword);
+
+    if (currentHash === inputHash) {
+      // 验证成功，保存记住密码的 Token 到本地设备
+      localStorage.setItem(AUTH_TOKEN_KEY, inputHash);
+      setIsAuthenticated(true);
+      showNotification('验证成功，已自动记住此设备！', 'success');
+      return true;
+    }
+    return false;
+  };
+
+  // 首次设置密码或修改密码
+  const handleSetPassword = (newPassword: string) => {
+    const newHash = hashString(newPassword);
+    localStorage.setItem(AUTH_PASSWORD_KEY, newHash);
+    localStorage.setItem(AUTH_TOKEN_KEY, newHash);
+    setHasPasswordSet(true);
+    setIsAuthenticated(true);
+    setShowChangePwdModal(false);
+    showNotification('管理密码设置成功！本机已自动免密记住。', 'success');
+  };
+
+  // 锁定/退出免密
+  const handleLock = () => {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    setIsAuthenticated(false);
+    showNotification('已退出免密状态，重新进入需输入密码', 'info');
   };
 
   // 3. 自然语言智能解析并同步到 Firebase Firestore
@@ -145,14 +216,12 @@ export default function App() {
           created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
         }));
 
-        // 写入本地
         setTasks((prev) => {
           const existingIds = new Set(prev.map((i) => i.id));
           const filteredNew = newItems.filter((i) => !existingIds.has(i.id));
           return [...filteredNew, ...prev];
         });
 
-        // 异步持久化到 Firebase Firestore 云端
         for (const item of newItems) {
           try {
             await setDoc(doc(db, 'tasks', item.id), item);
@@ -165,7 +234,6 @@ export default function App() {
       } else if (result.action === 'UPDATE_STATUS') {
         const updateMap = new Map(result.tasks.map((t) => [t.id, t]));
 
-        // 更新本地
         setTasks((prev) => {
           return prev.map((item) => {
             if (updateMap.has(item.id)) {
@@ -185,7 +253,6 @@ export default function App() {
           });
         });
 
-        // 异步更新到 Firebase Firestore 云端
         for (const t of result.tasks) {
           try {
             const completedAt = t.status === '已完成' ? (t.completed_at || currentDate) : null;
@@ -215,7 +282,6 @@ export default function App() {
   const handleUpdateStatus = async (taskId: string, newStatus: TaskStatus) => {
     const completedAt = newStatus === '已完成' ? currentDate : null;
 
-    // 先本地更新 UI（体验极其丝滑）
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id === taskId) {
@@ -229,7 +295,6 @@ export default function App() {
       })
     );
 
-    // 写入 Firebase Firestore
     try {
       await updateDoc(doc(db, 'tasks', taskId), {
         status: newStatus,
@@ -256,6 +321,17 @@ export default function App() {
     showNotification(`已删除任务 #${taskId}`, 'info');
   };
 
+  // 如果未认证，显示安全密码验证锁屏组件
+  if (!isAuthenticated) {
+    return (
+      <PasswordLock
+        isFirstTimeSetup={!hasPasswordSet}
+        onUnlock={handleUnlock}
+        onSetPassword={handleSetPassword}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* 顶部标题与4行汇总栏 */}
@@ -277,17 +353,38 @@ export default function App() {
 
       {/* 主体单列简洁布局 */}
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 space-y-4">
-        {/* 云端数据同步状态标识 */}
+        {/* 安全状态与云端状态条 */}
         <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-          <div className="flex items-center gap-1.5">
-            <Cloud className={`h-3.5 w-3.5 ${cloudSynced ? 'text-emerald-600' : 'text-slate-400'}`} />
-            <span>
-              {cloudSynced
-                ? 'Firebase Firestore 云端持久化已连接'
-                : '本地缓存就绪 · 已配置 Firebase 云端存储'}
-            </span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <Cloud className={`h-3.5 w-3.5 ${cloudSynced ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <span>
+                {cloudSynced
+                  ? 'Firebase Firestore 云端已连接'
+                  : '本地缓存就绪 · 已配置 Firebase'}
+              </span>
+            </div>
           </div>
-          <span className="font-mono text-[11px] text-slate-400">jop-smart-task-tracker</span>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowChangePwdModal(true)}
+              className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-blue-600 transition-colors"
+              title="修改管理密码"
+            >
+              <Key className="h-3 w-3" />
+              <span>修改密码</span>
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              onClick={handleLock}
+              className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-rose-600 transition-colors"
+              title="锁定系统，下次需要重新输入密码"
+            >
+              <Lock className="h-3 w-3" />
+              <span>锁定</span>
+            </button>
+          </div>
         </div>
 
         {/* 指令输入框与提交按钮 */}
@@ -300,6 +397,52 @@ export default function App() {
           onDeleteTask={handleDeleteTask}
         />
       </main>
+
+      {/* 修改密码弹窗 */}
+      {showChangePwdModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-bold text-slate-900 mb-2">修改访问密码</h3>
+            <p className="text-xs text-slate-500 mb-4">设置新的管理密码，设置成功后将更新本机信任记忆。</p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as HTMLFormElement;
+                const newPwd = (form.elements.namedItem('newPwd') as HTMLInputElement).value;
+                if (!newPwd || newPwd.length < 4) {
+                  showNotification('密码至少需要 4 位', 'error');
+                  return;
+                }
+                handleSetPassword(newPwd);
+              }}
+              className="space-y-3"
+            >
+              <input
+                type="password"
+                name="newPwd"
+                autoFocus
+                placeholder="输入新密码（至少4位）"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm focus:border-blue-600 focus:outline-hidden"
+              />
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePwdModal(false)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-blue-700"
+                >
+                  保存新密码
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
