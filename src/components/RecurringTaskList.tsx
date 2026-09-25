@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { RecurringPeriod, RecurringTaskItem } from '../types';
-import { compareRecurringTasks, PERIOD_STYLES } from '../utils/recurringUtils';
+import { compareRecurringTasks, PERIOD_STYLES, formatRecurringDeadline } from '../utils/recurringUtils';
 
 interface RecurringTaskListProps {
   recurringTasks: RecurringTaskItem[];
@@ -24,12 +24,13 @@ interface RecurringTaskListProps {
   onDispatchToActive?: (item: RecurringTaskItem) => void;
 }
 
+// 截止日期预设：严格只要日期，不带任何具体时间点
 const PRESET_DEADLINES: Record<RecurringPeriod, string[]> = {
-  日: ['每日 18:00 前', '每日 09:30 前', '每日下班前', '每日'],
-  周: ['每周一 10:00 前', '每周三', '每周五 17:00 前', '每周五下班前'],
+  日: ['每日', '当天'],
+  周: ['每周一', '每周二', '每周三', '每周四', '每周五', '每周日'],
   月: ['每月25日前', '每月10日前', '每月15日前', '每月最后一天', '每月1日'],
-  季度: ['每季度末25日前', '每季末最后一个工作日', '每季度初'],
-  年度: ['每年12月31日前', '每年年中6月30日前', '每年1月31日前'],
+  季度: ['每季度末25日前', '每季末', '每季度初'],
+  年度: ['每年12月31日前', '每年6月30日前', '每年1月31日前'],
 };
 
 export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
@@ -67,7 +68,7 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
     setEditingItem(item);
     setFormTitle(item.title);
     setFormPeriod(item.period);
-    setFormDeadline(item.deadline);
+    setFormDeadline(formatRecurringDeadline(item.deadline));
     setFormNotes(item.notes || '');
     setIsModalOpen(true);
   };
@@ -81,23 +82,25 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
     }
   };
 
-  // 提交保存
+  // 提交保存：过滤具体时间点，只保留日期
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim()) return;
+
+    const cleanedDeadline = formatRecurringDeadline(formDeadline.trim()) || '按周期执行';
 
     if (editingItem) {
       await onUpdateRecurringTask(editingItem.id, {
         title: formTitle.trim(),
         period: formPeriod,
-        deadline: formDeadline.trim() || '按周期执行',
+        deadline: cleanedDeadline,
         notes: formNotes.trim(),
       });
     } else {
       await onAddRecurringTask({
         title: formTitle.trim(),
         period: formPeriod,
-        deadline: formDeadline.trim() || '按周期执行',
+        deadline: cleanedDeadline,
         notes: formNotes.trim(),
         created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
       });
@@ -114,8 +117,9 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
       }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
+        const cleanDl = formatRecurringDeadline(task.deadline).toLowerCase();
         const matchTitle = task.title.toLowerCase().includes(q);
-        const matchDeadline = task.deadline.toLowerCase().includes(q);
+        const matchDeadline = cleanDl.includes(q);
         const matchPeriod = task.period.toLowerCase().includes(q);
         if (!matchTitle && !matchDeadline && !matchPeriod) return false;
       }
@@ -129,7 +133,7 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
       序号: index + 1,
       任务描述: task.title,
       周期: task.period,
-      截止日期: task.deadline,
+      截止日期: formatRecurringDeadline(task.deadline),
       备注说明: task.notes || '-',
       创建时间: task.created_at || '-',
     }));
@@ -163,7 +167,7 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索周期任务描述（如：对账、考勤、例会）或截止时间..."
+              placeholder="搜索周期任务描述（如：对账、考勤、例会）或截止日期..."
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pr-8 pl-9 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-100"
             />
             {searchQuery && (
@@ -232,103 +236,112 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
       </div>
 
       {/* 周期任务列表卡片：无序列号，只显示【任务描述】、【周期】、【截止日期】及操作 */}
+      {/* overflow-x-auto 配合 min-w 彻底解决手机端列宽被挤压成单字的问题 */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-        {/* 表头（严格不包含序列号列） */}
-        <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 text-xs font-semibold text-slate-700">
-          <div className="flex-1 min-w-0">任务描述</div>
-          <div className="w-16 sm:w-20 shrink-0 text-center">周期</div>
-          <div className="w-32 sm:w-44 shrink-0 text-center">截止日期</div>
-          <div className="w-20 sm:w-28 shrink-0 text-center">操作</div>
-        </div>
-
-        {/* 列表项 */}
-        <div className="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
-          {sortedAndFilteredTasks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-              <Calendar className="h-10 w-10 text-slate-300 mb-2" />
-              <p className="text-sm font-semibold text-slate-700">
-                {searchQuery ? '未找到符合条件的周期任务' : '暂无固定周期任务'}
-              </p>
-              <p className="mt-1 text-xs text-slate-400 max-w-sm">
-                周期任务用于管理固定时间的例行事项（如每周一例会、每月25日对账、季末决算等），无需序列号。
-              </p>
-              <button
-                type="button"
-                onClick={handleOpenAdd}
-                className="mt-3.5 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                立即创建第一个周期任务
-              </button>
+        <div className="overflow-x-auto">
+          <div className="min-w-[460px] sm:min-w-full">
+            {/* 表头（严格不包含序列号列，保证任务描述列宽充裕） */}
+            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 text-xs font-semibold text-slate-700">
+              <div className="flex-1 min-w-[150px]">任务描述</div>
+              <div className="w-14 sm:w-18 shrink-0 text-center">周期</div>
+              <div className="w-28 sm:w-36 shrink-0 text-center">截止日期</div>
+              <div className="w-20 sm:w-24 shrink-0 text-center">操作</div>
             </div>
-          ) : (
-            sortedAndFilteredTasks.map((task) => {
-              const style = PERIOD_STYLES[task.period] || PERIOD_STYLES['月'];
 
-              return (
-                <div
-                  key={task.id}
-                  className="group flex items-center gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-slate-50/80 bg-white"
-                >
-                  {/* 1. 任务描述（无序列号） */}
-                  <div className="flex-1 min-w-0 pr-2">
-                    <p className="font-medium text-slate-900 text-xs sm:text-sm leading-snug break-words whitespace-normal">
-                      {task.title}
-                    </p>
-                    {task.notes && (
-                      <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-                        {task.notes}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* 2. 周期（日、周、月、季度、年度） */}
-                  <div className="w-16 sm:w-20 shrink-0 flex items-center justify-center">
-                    <span
-                      className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold ${style.lightBg} ${style.text} ring-1 ${style.ring}`}
-                    >
-                      {task.period}
-                    </span>
-                  </div>
-
-                  {/* 3. 截止日期（每日、每周一、每月25日前等等） */}
-                  <div className="w-32 sm:w-44 shrink-0 text-center font-mono text-xs font-medium text-slate-700 bg-slate-50/90 rounded-md py-1 px-2 border border-slate-100">
-                    {task.deadline}
-                  </div>
-
-                  {/* 4. 操作栏：生成当期待办、编辑、删除 */}
-                  <div className="w-20 sm:w-28 shrink-0 flex items-center justify-center gap-1 sm:gap-1.5">
-                    {onDispatchToActive && (
-                      <button
-                        type="button"
-                        onClick={() => onDispatchToActive(task)}
-                        className="inline-flex items-center rounded border border-blue-200 bg-blue-50/60 p-1 text-blue-700 hover:bg-blue-100 transition-colors"
-                        title="将此周期任务派生为今日待办任务，放入主页明细"
-                      >
-                        <ArrowRightCircle className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEdit(task)}
-                      className="inline-flex items-center rounded border border-slate-200 bg-white p-1 text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors"
-                      title="编辑周期任务"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteRecurringTask(task.id)}
-                      className="inline-flex items-center rounded border border-slate-200 bg-white p-1 text-slate-400 hover:text-rose-600 hover:border-rose-300 transition-colors"
-                      title="删除此周期任务"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+            {/* 列表项 */}
+            <div className="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
+              {sortedAndFilteredTasks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center px-4">
+                  <Calendar className="h-10 w-10 text-slate-300 mb-2" />
+                  <p className="text-sm font-semibold text-slate-700">
+                    {searchQuery ? '未找到符合条件的周期任务' : '暂无固定周期任务'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400 max-w-sm">
+                    周期任务用于管理固定时间的例行事项（如每周一例会、每月25日对账、季末决算等），无需序列号。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleOpenAdd}
+                    className="mt-3.5 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    立即创建第一个周期任务
+                  </button>
                 </div>
-              );
-            })
-          )}
+              ) : (
+                sortedAndFilteredTasks.map((task) => {
+                  const style = PERIOD_STYLES[task.period] || PERIOD_STYLES['月'];
+                  const displayDeadline = formatRecurringDeadline(task.deadline);
+
+                  return (
+                    <div
+                      key={task.id}
+                      className="group flex items-center gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-slate-50/80 bg-white"
+                    >
+                      {/* 1. 任务描述（无序列号，min-w保证手机端字词完整阅读，绝不挤压成单字） */}
+                      <div className="flex-1 min-w-[150px] pr-2">
+                        <p className="font-medium text-slate-900 text-xs sm:text-sm leading-snug break-words whitespace-normal">
+                          {task.title}
+                        </p>
+                        {task.notes && (
+                          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                            {task.notes}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* 2. 周期（日、周、月、季度、年度） */}
+                      <div className="w-14 sm:w-18 shrink-0 flex items-center justify-center">
+                        <span
+                          className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold ${style.lightBg} ${style.text} ring-1 ${style.ring}`}
+                        >
+                          {task.period}
+                        </span>
+                      </div>
+
+                      {/* 3. 截止日期（只要日期不要时间点，如：每日、每周一、每月25日前） */}
+                      <div
+                        className="w-28 sm:w-36 shrink-0 text-center font-mono text-xs font-medium text-slate-700 bg-slate-50/90 rounded-md py-1 px-2 border border-slate-100 truncate"
+                        title={displayDeadline}
+                      >
+                        {displayDeadline}
+                      </div>
+
+                      {/* 4. 操作栏：生成当期待办、编辑、删除 */}
+                      <div className="w-20 sm:w-24 shrink-0 flex items-center justify-center gap-1 sm:gap-1.5">
+                        {onDispatchToActive && (
+                          <button
+                            type="button"
+                            onClick={() => onDispatchToActive(task)}
+                            className="inline-flex items-center rounded border border-blue-200 bg-blue-50/60 p-1 text-blue-700 hover:bg-blue-100 transition-colors"
+                            title="将此周期任务派生为今日待办任务，放入主页明细"
+                          >
+                            <ArrowRightCircle className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(task)}
+                          className="inline-flex items-center rounded border border-slate-200 bg-white p-1 text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors"
+                          title="编辑周期任务"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteRecurringTask(task.id)}
+                          className="inline-flex items-center rounded border border-slate-200 bg-white p-1 text-slate-400 hover:text-rose-600 hover:border-rose-300 transition-colors"
+                          title="删除此周期任务"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
         {/* 底部信息 */}
@@ -402,21 +415,24 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
                 </div>
               </div>
 
-              {/* 3. 截止日期（支持输入 + 快速预设标签） */}
+              {/* 3. 截止日期（只要日期，不要时间点） */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  截止日期说明 <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    截止日期 <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-blue-600 font-medium">仅需日期，无需具体时间点</span>
+                </div>
                 <input
                   type="text"
                   required
                   value={formDeadline}
                   onChange={(e) => setFormDeadline(e.target.value)}
-                  placeholder="如：每日、每周一、每月25日前、每季末等"
+                  placeholder="如：每日、每周一、每月25日前、每季度末等"
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-100"
                 />
 
-                {/* 快捷推荐预设 */}
+                {/* 快捷推荐预设（无时间点） */}
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <span className="text-[10px] text-slate-400 self-center">快捷填入:</span>
                   {(PRESET_DEADLINES[formPeriod] || []).map((preset) => (
@@ -474,3 +490,4 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
     </div>
   );
 };
+

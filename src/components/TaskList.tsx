@@ -31,20 +31,27 @@ interface TaskListProps {
   onDispatchRecurringToActive?: (item: RecurringTaskItem) => void;
 }
 
-// 格式化截止日期为月日形式（例如 9.22、9.25）
-function formatShortDate(deadline: string): string {
+// 格式化截止日期为月日形式（例如 9.22、9.25），严格只要日期不要时间点
+function formatShortDate(deadline: string | undefined | null): string {
   if (!deadline) return '-';
-  if (deadline === '当天') {
+  // 过滤掉具体时间点（如 18:00、09:30、18点、下午、上午等）
+  const cleaned = String(deadline)
+    .replace(/\s*\d{1,2}:\d{2}(?::\d{2})?(?:\s*前)?/g, '')
+    .replace(/\s*\d{1,2}点(?:\d{1,2}分)?(?:\s*前)?/g, '')
+    .replace(/\s*(?:上午|下午|晚上|中午|早晨|下班前|上班前)/g, '')
+    .trim();
+
+  if (cleaned === '当天' || cleaned === '今天') {
     const now = new Date();
     return `${now.getMonth() + 1}.${now.getDate()}`;
   }
-  const match = deadline.match(/(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})/);
+  const match = cleaned.match(/(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})/);
   if (match) {
     const m = parseInt(match[2], 10);
     const d = parseInt(match[3], 10);
     return `${m}.${d}`;
   }
-  return deadline;
+  return cleaned || '-';
 }
 
 export const TaskList: React.FC<TaskListProps> = ({
@@ -304,17 +311,17 @@ export const TaskList: React.FC<TaskListProps> = ({
             )}
           </div>
 
-          {/* 滚动容器 */}
+          {/* 滚动容器：加入 min-w-[480px] 保证手机端任务描述列宽充裕，绝不挤压成单字 */}
           <div className="overflow-x-auto">
-            <div className="min-w-full">
+            <div className="min-w-[480px] sm:min-w-full">
               {/* 表头 */}
               <div className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px] sm:text-xs font-semibold text-slate-600">
                 <div className="w-12 sm:w-14 shrink-0">序列号</div>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-[140px]">
                   {currentTab === 'active' ? '待办任务描述' : '已核销历史任务描述'}
                 </div>
                 <div className="w-13 sm:w-15 shrink-0 text-center">状态</div>
-                <div className="w-10 sm:w-12 shrink-0 text-center">
+                <div className="w-12 sm:w-14 shrink-0 text-center">
                   {currentTab === 'active' ? '截止' : '完成核销'}
                 </div>
                 <div className="w-12 sm:w-14 shrink-0 text-center">
@@ -386,8 +393,8 @@ export const TaskList: React.FC<TaskListProps> = ({
                           )}
                         </div>
 
-                        {/* 2. 任务描述 */}
-                        <div className="flex-1 min-w-0 pr-1">
+                        {/* 2. 任务描述（设置 min-w-[140px]，在手机端保障良好横向阅读排版） */}
+                        <div className="flex-1 min-w-[140px] pr-1">
                           <p
                             className={`font-medium text-[11px] sm:text-xs leading-snug break-words whitespace-normal ${
                               isHistory ? 'text-slate-600' : 'text-slate-800'
@@ -397,7 +404,7 @@ export const TaskList: React.FC<TaskListProps> = ({
                           </p>
                           {isHistory && task.completed_at && (
                             <span className="text-[10px] text-emerald-600 font-mono">
-                              核销于 {task.completed_at}
+                              核销于 {formatShortDate(task.completed_at)}
                             </span>
                           )}
                         </div>
@@ -426,13 +433,13 @@ export const TaskList: React.FC<TaskListProps> = ({
                           )}
                         </div>
 
-                        {/* 4. 截止日期 或 核销日期 */}
+                        {/* 4. 截止日期 或 核销日期（只要日期，不要时间点） */}
                         <div
-                          className="w-10 sm:w-12 shrink-0 text-center font-mono text-[10px] sm:text-xs text-slate-600"
+                          className="w-12 sm:w-14 shrink-0 text-center font-mono text-[10px] sm:text-xs text-slate-600 truncate"
                           title={
                             isHistory
-                              ? `核销日期: ${task.completed_at || task.deadline}`
-                              : `截止日期: ${task.deadline}`
+                              ? `核销日期: ${formatShortDate(task.completed_at || task.deadline)}`
+                              : `截止日期: ${formatShortDate(task.deadline)}`
                           }
                         >
                           {isHistory
@@ -483,6 +490,7 @@ export const TaskList: React.FC<TaskListProps> = ({
               </div>
             </div>
           </div>
+
 
           {/* 底部信息栏 */}
           <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-1.5 text-[11px] text-slate-500 flex items-center justify-between">

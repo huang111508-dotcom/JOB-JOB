@@ -1,4 +1,5 @@
 import { ParseResult, TaskItem, RecurringTaskItem, RecurringPeriod } from '../types';
+import { formatRecurringDeadline } from './recurringUtils';
 
 export function cleanTaskId(id: string | undefined | null): string {
   if (!id) return '';
@@ -120,7 +121,7 @@ export function parseTasksLocally(
         id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         title,
         period,
-        deadline,
+        deadline: formatRecurringDeadline(deadline),
         created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
       });
     }

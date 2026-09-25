@@ -90,6 +90,19 @@ export function compareRecurringTasks(a: RecurringTaskItem, b: RecurringTaskItem
 }
 
 /**
+ * 格式化截止日期：严格只要日期，过滤掉所有具体时间点（如 18:00、10:00前、下午等）
+ */
+export function formatRecurringDeadline(deadline: string | undefined | null): string {
+  if (!deadline) return '-';
+  const cleaned = deadline
+    .replace(/\s*\d{1,2}:\d{2}(?::\d{2})?(?:\s*前)?/g, '')
+    .replace(/\s*\d{1,2}点(?:\d{1,2}分)?(?:\s*前)?/g, '')
+    .replace(/\s*(?:上午|下午|晚上|中午|早晨|下班前|上班前)/g, '')
+    .trim();
+  return cleaned || deadline;
+}
+
+/**
  * 周期色彩样式配置
  */
 export const PERIOD_STYLES: Record<

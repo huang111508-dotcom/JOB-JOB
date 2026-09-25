@@ -18,7 +18,7 @@ import {
   getDayPrefix,
   getNextSequence,
 } from './utils/taskParser';
-import { compareRecurringTasks } from './utils/recurringUtils';
+import { compareRecurringTasks, formatRecurringDeadline } from './utils/recurringUtils';
 import { CheckCircle2, AlertTriangle, Info, Cloud, Lock, Key } from 'lucide-react';
 import { db } from './firebase';
 import {
@@ -524,7 +524,7 @@ export default function App() {
       status: '进行中',
       completed_at: null,
       created_at: nowStr,
-      notes: `由周期任务派发（周期：${item.period}，规则：${item.deadline}）`,
+      notes: `由周期任务派发（周期：${item.period}，规则：${formatRecurringDeadline(item.deadline)}）`,
     };
 
     setTasks((prev) => {
