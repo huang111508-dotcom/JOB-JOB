@@ -1,4 +1,4 @@
-import { ParseResult, TaskItem } from '../types';
+import { ParseResult, TaskItem, RecurringTaskItem, RecurringPeriod } from '../types';
 
 export function cleanTaskId(id: string | undefined | null): string {
   if (!id) return '';
@@ -59,6 +59,79 @@ export function parseTasksLocally(
       action: 'QUERY',
       tasks: [],
     };
+  }
+
+  // Check recurring task creation intent
+  if (/^(?:添加|新增)?\s*周期任务|周期[:：]/i.test(text) || /周期任务/.test(text)) {
+    const lines = text
+      .split(/\n+/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    const recurringTasks: RecurringTaskItem[] = [];
+
+    for (const rawLine of lines) {
+      let line = rawLine.replace(/^(?:添加|新增)?\s*周期任务[:：]?\s*/i, '').trim();
+      if (!line) continue;
+
+      let period: RecurringPeriod = '月';
+      if (/年度|每年|按年/.test(line)) {
+        period = '年度';
+      } else if (/季度|每季|按季/.test(line)) {
+        period = '季度';
+      } else if (/每周|周度|按周|星期/.test(line)) {
+        period = '周';
+      } else if (/每日|每天|日度|按日/.test(line)) {
+        period = '日';
+      } else if (/每月|月度|按月/.test(line)) {
+        period = '月';
+      }
+
+      let deadline = '按周期执行';
+      const deadlineMatch = line.match(/(?:截止|截至|期限|日期)?\s*(每日[^\s,，]*|每周[^\s,，]*|每月[^\s,，]*|每季[^\s,，]*|每年[^\s,，]*|\d{1,2}日[前]?|\d{1,2}号[前]?)/);
+      if (deadlineMatch) {
+        deadline = deadlineMatch[1];
+      } else if (period === '日') {
+        deadline = '每日';
+      } else if (period === '周') {
+        deadline = '每周一';
+      } else if (period === '月') {
+        deadline = '每月25日前';
+      } else if (period === '季度') {
+        deadline = '每季度末25日前';
+      } else if (period === '年度') {
+        deadline = '每年12月31日前';
+      }
+
+      // Clean title
+      let title = line
+        .replace(/(?:截止|截至|期限|日期)?\s*(每日[^\s,，]*|每周[^\s,，]*|每月[^\s,，]*|每季[^\s,，]*|每年[^\s,，]*|\d{1,2}日[前]?|\d{1,2}号[前]?)/g, '')
+        .replace(/(?:周期[：:]?\s*(?:日|周|月|季度|年度))/g, '')
+        .replace(/(?:日度|周度|月度|季度|年度|每日|每周|每月|每季|每年)/g, '')
+        .replace(/[,，;；\s]+$/, '')
+        .replace(/^[,，;；\s]+/, '')
+        .trim();
+
+      if (!title) {
+        title = line;
+      }
+
+      recurringTasks.push({
+        id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        title,
+        period,
+        deadline,
+        created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      });
+    }
+
+    if (recurringTasks.length > 0) {
+      return {
+        action: 'CREATE_RECURRING',
+        tasks: [],
+        recurringTasks,
+      };
+    }
   }
 
   const lines = text

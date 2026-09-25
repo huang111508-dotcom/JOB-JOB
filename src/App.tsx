@@ -9,7 +9,8 @@ import { TaskInput } from './components/TaskInput';
 import { TaskList } from './components/TaskList';
 import { PasswordLock } from './components/PasswordLock';
 import { INITIAL_TASKS } from './data/initialTasks';
-import { ParseResult, TaskItem, TaskStatus } from './types';
+import { INITIAL_RECURRING_TASKS } from './data/initialRecurringTasks';
+import { ParseResult, TaskItem, TaskStatus, ActiveTabType, RecurringTaskItem } from './types';
 import {
   parseTasksLocally,
   cleanTaskId,
@@ -17,6 +18,7 @@ import {
   getDayPrefix,
   getNextSequence,
 } from './utils/taskParser';
+import { compareRecurringTasks } from './utils/recurringUtils';
 import { CheckCircle2, AlertTriangle, Info, Cloud, Lock, Key } from 'lucide-react';
 import { db } from './firebase';
 import {
@@ -29,6 +31,7 @@ import {
 } from 'firebase/firestore';
 
 const STORAGE_KEY = 'smart_task_tracker_tasks_v2';
+const RECURRING_STORAGE_KEY = 'smart_task_tracker_recurring_v1';
 const AUTH_PASSWORD_KEY = 'smart_task_tracker_pwd_hash';
 const AUTH_TOKEN_KEY = 'smart_task_tracker_auth_token';
 
@@ -53,7 +56,7 @@ export default function App() {
   }, []);
 
   const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('active');
 
   // 认证状态管理：支持记住密码，输入一次后本机永久免密
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -93,6 +96,18 @@ export default function App() {
     return INITIAL_TASKS;
   });
 
+  const [recurringTasks, setRecurringTasks] = useState<RecurringTaskItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(RECURRING_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Failed to load recurring tasks from localStorage', e);
+    }
+    return INITIAL_RECURRING_TASKS;
+  });
+
   const [isLoading, setIsLoading] = useState(false);
   const [cloudSynced, setCloudSynced] = useState<boolean | null>(null);
   const [notification, setNotification] = useState<{
@@ -100,15 +115,16 @@ export default function App() {
     message: string;
   } | null>(null);
 
-  // 1. 监听 Firebase Firestore 云端数据库，实现数据实时同步与多端同步
+  // 1. 监听 Firebase Firestore 云端数据库，实现待办和周期任务的实时多端同步
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    let unsubscribe = () => {};
+    let unsubscribeTasks = () => {};
+    let unsubscribeRecurring = () => {};
 
     try {
+      // 1.1 常规任务集合同步
       const tasksColRef = collection(db, 'tasks');
-
       getDocs(tasksColRef)
         .then((snapshot) => {
           if (snapshot.empty) {
@@ -121,7 +137,7 @@ export default function App() {
           console.warn('[Firebase] Initial check note:', err);
         });
 
-      unsubscribe = onSnapshot(
+      unsubscribeTasks = onSnapshot(
         tasksColRef,
         (snapshot) => {
           if (!snapshot.empty) {
@@ -146,12 +162,49 @@ export default function App() {
           setCloudSynced(false);
         }
       );
+
+      // 1.2 周期任务集合同步
+      const recurringColRef = collection(db, 'recurring_tasks');
+      getDocs(recurringColRef)
+        .then((snapshot) => {
+          if (snapshot.empty) {
+            INITIAL_RECURRING_TASKS.forEach((t) => {
+              setDoc(doc(db, 'recurring_tasks', t.id), t).catch(() => {});
+            });
+          }
+        })
+        .catch((err) => {
+          console.warn('[Firebase] Initial recurring check note:', err);
+        });
+
+      unsubscribeRecurring = onSnapshot(
+        recurringColRef,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const remoteRecurring: RecurringTaskItem[] = [];
+            snapshot.forEach((d) => {
+              remoteRecurring.push(d.data() as RecurringTaskItem);
+            });
+            remoteRecurring.sort(compareRecurringTasks);
+            setRecurringTasks(remoteRecurring);
+            try {
+              localStorage.setItem(RECURRING_STORAGE_KEY, JSON.stringify(remoteRecurring));
+            } catch {}
+          }
+        },
+        (error) => {
+          console.warn('[Firebase] Recurring onSnapshot warning:', error);
+        }
+      );
     } catch (e) {
       console.warn('[Firebase] Setup warning:', e);
       setCloudSynced(false);
     }
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeTasks();
+      unsubscribeRecurring();
+    };
   }, [isAuthenticated]);
 
   // 2. 本地持久化缓存兜底备份
@@ -163,6 +216,16 @@ export default function App() {
       console.error('Failed to save tasks', e);
     }
   }, [tasks, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    try {
+      localStorage.setItem(RECURRING_STORAGE_KEY, JSON.stringify(recurringTasks));
+    } catch (e) {
+      console.error('Failed to save recurring tasks', e);
+    }
+  }, [recurringTasks, isAuthenticated]);
+
 
   const showNotification = (
     message: string,
@@ -382,6 +445,11 @@ export default function App() {
         } else {
           showNotification(`已更新任务 ${updatedIds || '明细'} 状态并同步到云端！`, 'success');
         }
+      } else if (result.action === 'CREATE_RECURRING' && result.recurringTasks && result.recurringTasks.length > 0) {
+        for (const item of result.recurringTasks) {
+          await handleAddRecurringTask(item);
+        }
+        setActiveTab('recurring');
       } else if (result.action === 'QUERY') {
         showNotification(`查询指令已识别，共匹配 ${result.tasks.length} 条记录`, 'info');
       }
@@ -393,7 +461,92 @@ export default function App() {
     }
   };
 
-  // 4. 状态变更（含核销）并推送到 Firestore
+  // 4. 周期任务操作（增、改、删、派发）
+  const handleAddRecurringTask = async (item: Omit<RecurringTaskItem, 'id'>) => {
+    const newId = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newItem: RecurringTaskItem = {
+      ...item,
+      id: newId,
+    };
+
+    setRecurringTasks((prev) => {
+      const next = [...prev, newItem];
+      next.sort(compareRecurringTasks);
+      return next;
+    });
+
+    try {
+      await setDoc(doc(db, 'recurring_tasks', newId), newItem);
+    } catch (cloudErr) {
+      console.warn('[Firebase] Recurring write note:', cloudErr);
+    }
+
+    showNotification(`已新增周期任务「${newItem.title}」，已同步至云端！`, 'success');
+  };
+
+  const handleUpdateRecurringTask = async (id: string, updates: Partial<RecurringTaskItem>) => {
+    setRecurringTasks((prev) => {
+      const next = prev.map((t) => (t.id === id ? { ...t, ...updates } : t));
+      next.sort(compareRecurringTasks);
+      return next;
+    });
+
+    try {
+      await setDoc(doc(db, 'recurring_tasks', id), updates, { merge: true });
+    } catch (cloudErr) {
+      console.warn('[Firebase] Recurring update note:', cloudErr);
+    }
+
+    showNotification(`已更新周期任务「${updates.title || '信息'}」！`, 'success');
+  };
+
+  const handleDeleteRecurringTask = async (id: string) => {
+    setRecurringTasks((prev) => prev.filter((t) => t.id !== id));
+    try {
+      await deleteDoc(doc(db, 'recurring_tasks', id));
+    } catch (cloudErr) {
+      console.warn('[Firebase] Recurring delete note:', cloudErr);
+    }
+    showNotification('已删除该周期任务', 'info');
+  };
+
+  // 将周期任务快捷派生为今日待办任务
+  const handleDispatchRecurringToActive = async (item: RecurringTaskItem) => {
+    const dayPrefix = getDayPrefix(currentDate);
+    const newId = getNextSequence(dayPrefix, tasks);
+    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 16);
+
+    const newTask: TaskItem = {
+      id: newId,
+      title: item.title,
+      priority: item.period === '日' ? '高' : '中',
+      deadline: '当天',
+      status: '进行中',
+      completed_at: null,
+      created_at: nowStr,
+      notes: `由周期任务派发（周期：${item.period}，规则：${item.deadline}）`,
+    };
+
+    setTasks((prev) => {
+      const next = [newTask, ...prev];
+      next.sort((a, b) => compareTaskIds(a.id, b.id));
+      return next;
+    });
+
+    setRecentlyUpdatedId(newId);
+    setTimeout(() => setRecentlyUpdatedId(null), 3500);
+
+    try {
+      await setDoc(doc(db, 'tasks', newId), newTask);
+    } catch (cloudErr) {
+      console.warn('[Firebase] Dispatch task note:', cloudErr);
+    }
+
+    setActiveTab('active');
+    showNotification(`已将周期任务「${item.title}」派发为待办任务 #${newId}！`, 'success');
+  };
+
+  // 5. 状态变更（含核销）并推送到 Firestore
   const handleUpdateStatus = async (taskId: string, newStatus: TaskStatus) => {
     const cId = cleanTaskId(taskId);
     const completedAt = newStatus === '已完成' ? currentDate : null;
@@ -435,7 +588,7 @@ export default function App() {
     }
   };
 
-  // 5. 删除任务并从 Firestore 移除
+  // 6. 删除任务并从 Firestore 移除
   const handleDeleteTask = async (taskId: string) => {
     const cId = cleanTaskId(taskId);
     setTasks((prev) => prev.filter((t) => cleanTaskId(t.id) !== cId));
@@ -460,12 +613,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* 顶部标题与4行汇总栏 */}
+      {/* 顶部标题与汇总栏（含待办、进行中、未开始、已核销、周期任务快捷切换） */}
       <Header
         tasks={tasks}
+        recurringCount={recurringTasks.length}
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />
+
 
       {/* 提示条 */}
       {notification && (
@@ -520,15 +675,21 @@ export default function App() {
         {/* 指令输入框与提交按钮 */}
         <TaskInput onParse={handleParse} isLoading={isLoading} />
 
-        {/* 任务追踪清单（含待办明细与历史任务标签页） */}
+        {/* 任务追踪清单（含主页待办明细、历史任务归档与周期任务明细标签页） */}
         <TaskList
           tasks={tasks}
+          recurringTasks={recurringTasks}
           onUpdateStatus={handleUpdateStatus}
           onDeleteTask={handleDeleteTask}
           recentlyUpdatedId={recentlyUpdatedId}
           activeTab={activeTab}
           onTabChange={setActiveTab}
+          onAddRecurringTask={handleAddRecurringTask}
+          onUpdateRecurringTask={handleUpdateRecurringTask}
+          onDeleteRecurringTask={handleDeleteRecurringTask}
+          onDispatchRecurringToActive={handleDispatchRecurringToActive}
         />
+
       </main>
 
       {/* 修改密码弹窗 */}

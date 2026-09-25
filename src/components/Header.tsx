@@ -1,16 +1,18 @@
 import React from 'react';
-import { CheckCircle2, Clock, ListTodo, Archive, ChevronRight } from 'lucide-react';
-import { TaskItem } from '../types';
+import { CheckCircle2, Clock, ListTodo, Archive, ChevronRight, Repeat } from 'lucide-react';
+import { TaskItem, ActiveTabType } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   tasks: TaskItem[];
-  activeTab?: 'active' | 'history';
-  onTabChange?: (tab: 'active' | 'history') => void;
+  recurringCount?: number;
+  activeTab?: ActiveTabType;
+  onTabChange?: (tab: ActiveTabType) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   tasks,
+  recurringCount = 0,
   activeTab = 'active',
   onTabChange,
 }) => {
@@ -28,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
               任务追踪管理
             </h1>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              待办敏捷跟踪 · 已核销自动归档历史
+              待办敏捷跟踪 · 历史核销归档 · 固定周期管理
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -39,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* 任务汇总栏：4个模块交互行，支持点击快捷切换视图 */}
+        {/* 任务汇总栏：模块交互行，支持点击快捷切换视图 */}
         <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
           {/* 第1行：当前待办总任务量 */}
           <div
@@ -109,8 +111,31 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             </div>
           </div>
+
+          {/* 第5行：周期任务明细（点击直接切到周期任务） */}
+          <div
+            onClick={() => onTabChange?.('recurring')}
+            className={`flex items-center justify-between rounded-lg px-3.5 py-2 cursor-pointer transition-all ${
+              activeTab === 'recurring'
+                ? 'bg-indigo-100/90 ring-1 ring-indigo-300'
+                : 'bg-indigo-50/60 hover:bg-indigo-100/70'
+            }`}
+            title="点击查看周期任务明细"
+          >
+            <div className="flex items-center gap-2.5 text-xs text-indigo-900">
+              <Repeat className="h-4 w-4 text-indigo-600" />
+              <span className="font-semibold">周期任务明细（固定周期例行事项）</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-bold text-indigo-950">{recurringCount} 项</span>
+              <span className="rounded bg-indigo-200/80 px-1.5 py-0.5 text-[10px] font-bold text-indigo-900">
+                查看周期
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </header>
   );
 };
+
