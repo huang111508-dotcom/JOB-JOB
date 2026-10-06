@@ -101,11 +101,35 @@ function fallbackRuleParser(
           .replace(/^[,，;；\s]+/, '')
           .trim();
 
+      // 更新任务时：严格保留已有截止日期，绝不自动更新为今天！除非用户在输入中明确要求修改截止日期
+      let updatedDeadline = existing ? existing.deadline : baseDate;
+      const explicitDateMatch = line.match(
+        /(?:截止|截至|限期|到期|改期|延期)\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天)/
+      );
+      if (explicitDateMatch) {
+        const rawDate = explicitDateMatch[1];
+        if (rawDate.includes('.')) {
+          const [m, day] = rawDate.split('.');
+          const year = baseDate.split('-')[0] || '2026';
+          updatedDeadline = `${year}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        } else if (rawDate === '明天') {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() + 1);
+          updatedDeadline = d.toISOString().split('T')[0];
+        } else if (rawDate === '后天') {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() + 2);
+          updatedDeadline = d.toISOString().split('T')[0];
+        } else {
+          updatedDeadline = rawDate;
+        }
+      }
+
       tasks.push({
         id: targetId,
         title: cleanTitle && cleanTitle.length > 1 ? cleanTitle : existing ? existing.title : `任务 ${targetId}`,
         priority: existing ? existing.priority : '中',
-        deadline: existing ? existing.deadline : '当天',
+        deadline: updatedDeadline,
         status: newStatus,
         completed_at: completedAt,
       });
@@ -119,13 +143,16 @@ function fallbackRuleParser(
       priority = '低';
     }
 
-    let deadline = '当天';
+    // 未说明截止日期的任务，固定标记创建当日为截止日（锁定具体日期）
+    let deadline = baseDate;
     const dateMatch = line.match(
-      /(截止|截至|限期|到期)?\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天|当天|本周)/
+      /(截止|截至|限期|到期)?\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天|当天|今天|本周)/
     );
     if (dateMatch) {
       const rawDate = dateMatch[2];
-      if (rawDate === '明天') {
+      if (rawDate === '当天' || rawDate === '今天') {
+        deadline = baseDate;
+      } else if (rawDate === '明天') {
         const d = new Date(baseDate);
         d.setDate(d.getDate() + 1);
         deadline = d.toISOString().split('T')[0];
@@ -141,6 +168,7 @@ function fallbackRuleParser(
         deadline = rawDate;
       }
     }
+
 
     let status: '未开始' | '进行中' | '已完成' = '未开始';
     let completedAt: string | null = null;
@@ -252,7 +280,9 @@ ${JSON.stringify(existingTasks, null, 2)}
    - id (string): 任务编号，纯数字字符串（例如 "9221"，切勿包含 "#" 或 "任务" 前缀）。若是更新/核销旧任务，请比对已有任务列表匹配其原 id（即使用户在自然语言中提到了任务标题，也请匹配已有任务中的 id 并沿用原 title）；若是新增任务，按照“MMD + 序号”生成（根据上下文最大的序号递增）。
    - title (string): 任务具体内容，去除日期、优先级等修饰词后的核心描述。若是更新状态指令且用户未修改标题，务必沿用已有任务的完整 title。
    - priority (string): 优先级。仅限 "高", "中", "低"。若用户未显式说明，沿用已有任务或默认为 "中"。
-   - deadline (string): 截止日期。格式化为标准格式（如 "YYYY-MM-DD"）或规范缩写（如 "当天"、"9.25"）。若用户未显式说明，默认值一律为 "当天"。
+   - deadline (string): 截止日期。
+     * 新建任务（CREATE）：若用户说明了截止日期，提取并格式化为标准格式（如 "YYYY-MM-DD" 或 "9.25"）；若用户未显式说明截止日期，一律自动标记为创建当日基准日期 "${today}" 为截止日（锁定为具体的固定日期，切勿返回易随时间滚动的"当天"）。
+     * 更新已有任务（UPDATE_STATUS）：必须严格保持已有任务的原 deadline，严禁自动修改或覆盖为今天！只有当用户输入中明确指示修改截止日期（如“改期到9.30”）时才更新 deadline。
    - status (string): 任务状态。仅限 "未开始", "进行中", "已完成"。新增任务默认为 "未开始"；若用户指定为进行中或已完成，则如实记录。
    - completed_at (string | null): 若状态为“已完成”，记录完成日期（如 "${today}"）；否则为 null。
 2. 意图判断 (action)：

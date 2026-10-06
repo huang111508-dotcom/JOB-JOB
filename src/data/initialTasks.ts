@@ -5,7 +5,7 @@ export const INITIAL_TASKS: TaskItem[] = [
     id: '9221',
     title: '仓管当日入库追踪',
     priority: '高',
-    deadline: '当天',
+    deadline: '2026-09-22',
     status: '进行中',
     completed_at: null,
     created_at: '2026-09-22 09:15',

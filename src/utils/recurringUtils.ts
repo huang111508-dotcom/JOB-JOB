@@ -96,8 +96,9 @@ export function formatRecurringDeadline(deadline: string | undefined | null): st
   if (!deadline) return '-';
   const cleaned = deadline
     .replace(/\s*\d{1,2}:\d{2}(?::\d{2})?(?:\s*前)?/g, '')
-    .replace(/\s*\d{1,2}点(?:\d{1,2}分)?(?:\s*前)?/g, '')
+    .replace(/\s*\d{1,2}点(?:\d{1,2}分|半)?(?:\s*前)?/g, '')
     .replace(/\s*(?:上午|下午|晚上|中午|早晨|下班前|上班前)/g, '')
+    .replace(/(?:上午|下午|晚上|中午)\s*\d{1,2}[:点]\d{0,2}/g, '')
     .trim();
   return cleaned || deadline;
 }

@@ -6,6 +6,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface HeaderProps {
   tasks: TaskItem[];
   recurringCount?: number;
+  overdueCount?: number;
   activeTab?: ActiveTabType;
   onTabChange?: (tab: ActiveTabType) => void;
 }
@@ -13,6 +14,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   tasks,
   recurringCount = 0,
+  overdueCount = 0,
   activeTab = 'active',
   onTabChange,
 }) => {
@@ -53,10 +55,16 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
             title="点击查看主页待办任务明细"
           >
-            <div className="flex items-center gap-2.5 text-xs text-slate-700">
+            <div className="flex items-center gap-2 text-xs text-slate-700">
               <ListTodo className="h-4 w-4 text-blue-600" />
               <span className="font-medium">主页待办任务总量</span>
-              <span className="text-[10px] text-slate-400">（仅显示进行中与未开始）</span>
+              {overdueCount > 0 ? (
+                <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">
+                  {overdueCount} 项已过期
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400">（仅显示进行中与未开始）</span>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-bold text-slate-900">{activeCount} 项</span>

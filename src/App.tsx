@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Header } from './components/Header';
 import { TaskInput } from './components/TaskInput';
-import { TaskList } from './components/TaskList';
+import { TaskList, isTaskOverdue, formatShortDate } from './components/TaskList';
 import { PasswordLock } from './components/PasswordLock';
 import { INITIAL_TASKS } from './data/initialTasks';
 import { INITIAL_RECURRING_TASKS } from './data/initialRecurringTasks';
@@ -88,7 +88,16 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((t: TaskItem) => {
+            let d = t.deadline;
+            if (d === '当天' || d === '今天') {
+              d = t.created_at ? t.created_at.slice(0, 10) : '2026-09-22';
+            }
+            return { ...t, deadline: d };
+          });
+        }
       }
     } catch (e) {
       console.error('Failed to load tasks from localStorage', e);
@@ -107,6 +116,10 @@ export default function App() {
     }
     return INITIAL_RECURRING_TASKS;
   });
+
+  const overdueCount = useMemo(() => {
+    return tasks.filter((t) => isTaskOverdue(t, currentDate)).length;
+  }, [tasks, currentDate]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [cloudSynced, setCloudSynced] = useState<boolean | null>(null);
@@ -352,6 +365,8 @@ export default function App() {
         });
 
         const matchedIds = new Set<string>();
+        // 判断用户输入中是否明确指示了新的截止日期（如：改期到9.30、截止明天）
+        const hasExplicitDateInInput = /(?:截止|截至|限期|到期|改期|延期)\s*(?:\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天|下周)/.test(userInput);
 
         setTasks((prev) => {
           const nextTasks = prev.map((item) => {
@@ -367,6 +382,12 @@ export default function App() {
                   ? updateData.completed_at || currentDate
                   : null;
 
+              // 保持任务原有的截止日期不变，绝不自动更新到当天
+              const finalDeadline =
+                hasExplicitDateInInput && updateData.deadline && updateData.deadline !== item.deadline
+                  ? updateData.deadline
+                  : item.deadline;
+
               return {
                 ...item,
                 title:
@@ -378,7 +399,7 @@ export default function App() {
                 status: targetStatus,
                 completed_at: completedAt,
                 priority: updateData.priority || item.priority,
-                deadline: updateData.deadline || item.deadline,
+                deadline: finalDeadline,
               };
             }
             return item;
@@ -392,7 +413,7 @@ export default function App() {
                 id: cId || getNextSequence(getDayPrefix(currentDate), prev),
                 title: t.title || `任务 ${cId}`,
                 priority: t.priority || '中',
-                deadline: t.deadline || '当天',
+                deadline: t.deadline || currentDate,
                 status: t.status || '未开始',
                 completed_at: t.status === '已完成' ? (t.completed_at || currentDate) : null,
                 created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
@@ -426,7 +447,7 @@ export default function App() {
                 completed_at: completedAt,
                 ...(t.title && !t.title.startsWith('任务 ') ? { title: t.title } : {}),
                 ...(t.priority ? { priority: t.priority } : {}),
-                ...(t.deadline ? { deadline: t.deadline } : {}),
+                ...(hasExplicitDateInInput && t.deadline ? { deadline: t.deadline } : {}),
               },
               { merge: true }
             );
@@ -520,7 +541,7 @@ export default function App() {
       id: newId,
       title: item.title,
       priority: item.period === '日' ? '高' : '中',
-      deadline: '当天',
+      deadline: currentDate,
       status: '进行中',
       completed_at: null,
       created_at: nowStr,
@@ -588,6 +609,40 @@ export default function App() {
     }
   };
 
+  // 5.2 截止日期点选修改并同步推送到 Firestore
+  const handleUpdateDeadline = async (taskId: string, newDeadline: string) => {
+    const cId = cleanTaskId(taskId);
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (cleanTaskId(t.id) === cId) {
+          return {
+            ...t,
+            deadline: newDeadline,
+          };
+        }
+        return t;
+      })
+    );
+
+    setRecentlyUpdatedId(cId);
+    setTimeout(() => setRecentlyUpdatedId(null), 3500);
+
+    try {
+      await setDoc(
+        doc(db, 'tasks', cId),
+        {
+          id: cId,
+          deadline: newDeadline,
+        },
+        { merge: true }
+      );
+    } catch (cloudErr) {
+      console.warn('[Firebase] Firestore deadline update note:', cloudErr);
+    }
+
+    showNotification(`已将任务 #${cId} 截止日期修改为 ${formatShortDate(newDeadline)}！`, 'success');
+  };
+
   // 6. 删除任务并从 Firestore 移除
   const handleDeleteTask = async (taskId: string) => {
     const cId = cleanTaskId(taskId);
@@ -617,6 +672,7 @@ export default function App() {
       <Header
         tasks={tasks}
         recurringCount={recurringTasks.length}
+        overdueCount={overdueCount}
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />
@@ -680,6 +736,7 @@ export default function App() {
           tasks={tasks}
           recurringTasks={recurringTasks}
           onUpdateStatus={handleUpdateStatus}
+          onUpdateDeadline={handleUpdateDeadline}
           onDeleteTask={handleDeleteTask}
           recentlyUpdatedId={recentlyUpdatedId}
           activeTab={activeTab}

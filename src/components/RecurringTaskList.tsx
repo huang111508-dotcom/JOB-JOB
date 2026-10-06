@@ -238,14 +238,14 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
       {/* 周期任务列表卡片：无序列号，只显示【任务描述】、【周期】、【截止日期】及操作 */}
       {/* overflow-x-auto 配合 min-w 彻底解决手机端列宽被挤压成单字的问题 */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <div className="min-w-[460px] sm:min-w-full">
+        <div className="overflow-x-auto pb-1">
+          <div className="min-w-[520px] sm:min-w-full">
             {/* 表头（严格不包含序列号列，保证任务描述列宽充裕） */}
             <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-3 py-2.5 text-xs font-semibold text-slate-700">
-              <div className="flex-1 min-w-[150px]">任务描述</div>
-              <div className="w-14 sm:w-18 shrink-0 text-center">周期</div>
-              <div className="w-28 sm:w-36 shrink-0 text-center">截止日期</div>
-              <div className="w-20 sm:w-24 shrink-0 text-center">操作</div>
+              <div className="flex-1 min-w-[220px]">任务描述</div>
+              <div className="w-16 shrink-0 text-center">周期</div>
+              <div className="w-28 shrink-0 text-center">截止日期</div>
+              <div className="w-24 shrink-0 text-center">操作</div>
             </div>
 
             {/* 列表项 */}
@@ -278,20 +278,20 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
                       key={task.id}
                       className="group flex items-center gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-slate-50/80 bg-white"
                     >
-                      {/* 1. 任务描述（无序列号，min-w保证手机端字词完整阅读，绝不挤压成单字） */}
-                      <div className="flex-1 min-w-[150px] pr-2">
+                      {/* 1. 任务描述（无序列号，min-w-[220px] 保证手机端字词完整阅读，绝不挤压成单字） */}
+                      <div className="flex-1 min-w-[220px] pr-2">
                         <p className="font-medium text-slate-900 text-xs sm:text-sm leading-snug break-words whitespace-normal">
                           {task.title}
                         </p>
                         {task.notes && (
-                          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                          <p className="text-[11px] text-slate-400 mt-0.5 break-words">
                             {task.notes}
                           </p>
                         )}
                       </div>
 
                       {/* 2. 周期（日、周、月、季度、年度） */}
-                      <div className="w-14 sm:w-18 shrink-0 flex items-center justify-center">
+                      <div className="w-16 shrink-0 flex items-center justify-center">
                         <span
                           className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold ${style.lightBg} ${style.text} ring-1 ${style.ring}`}
                         >
@@ -301,14 +301,14 @@ export const RecurringTaskList: React.FC<RecurringTaskListProps> = ({
 
                       {/* 3. 截止日期（只要日期不要时间点，如：每日、每周一、每月25日前） */}
                       <div
-                        className="w-28 sm:w-36 shrink-0 text-center font-mono text-xs font-medium text-slate-700 bg-slate-50/90 rounded-md py-1 px-2 border border-slate-100 truncate"
+                        className="w-28 shrink-0 text-center font-mono text-xs font-medium text-slate-700 bg-slate-50/90 rounded-md py-1 px-2 border border-slate-100 truncate"
                         title={displayDeadline}
                       >
                         {displayDeadline}
                       </div>
 
                       {/* 4. 操作栏：生成当期待办、编辑、删除 */}
-                      <div className="w-20 sm:w-24 shrink-0 flex items-center justify-center gap-1 sm:gap-1.5">
+                      <div className="w-24 shrink-0 flex items-center justify-center gap-1 sm:gap-1.5">
                         {onDispatchToActive && (
                           <button
                             type="button"

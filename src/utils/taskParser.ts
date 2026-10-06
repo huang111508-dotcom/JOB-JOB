@@ -200,11 +200,35 @@ export function parseTasksLocally(
         .replace(/^[,，;；\s]+/, '')
         .trim();
 
+      // 更新任务时：严格保留已有截止日期，绝不自动更新为今天！除非用户在输入中明确要求修改截止日期
+      let updatedDeadline = existing ? existing.deadline : baseDate;
+      const explicitDateMatch = line.match(
+        /(?:截止|截至|限期|到期|改期|延期)\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天)/
+      );
+      if (explicitDateMatch) {
+        const rawDate = explicitDateMatch[1];
+        if (rawDate.includes('.')) {
+          const [m, day] = rawDate.split('.');
+          const year = baseDate.split('-')[0] || '2026';
+          updatedDeadline = `${year}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        } else if (rawDate === '明天') {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() + 1);
+          updatedDeadline = d.toISOString().split('T')[0];
+        } else if (rawDate === '后天') {
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() + 2);
+          updatedDeadline = d.toISOString().split('T')[0];
+        } else {
+          updatedDeadline = rawDate;
+        }
+      }
+
       tasks.push({
         id: targetId,
         title: cleanTitle && cleanTitle.length > 1 ? cleanTitle : existing ? existing.title : `任务 ${targetId}`,
         priority: existing ? existing.priority : '中',
-        deadline: existing ? existing.deadline : '当天',
+        deadline: updatedDeadline,
         status: newStatus,
         completed_at: completedAt,
       });
@@ -219,13 +243,16 @@ export function parseTasksLocally(
       priority = '低';
     }
 
-    let deadline = '当天';
+    // 未说明截止日期的任务，固定标记创建当日为截止日（锁定具体日期，不随日历滚动更新）
+    let deadline = baseDate;
     const dateMatch = line.match(
-      /(截止|截至|限期|到期)?\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天|当天|本周)/
+      /(截止|截至|限期|到期)?\s*(\d{1,2}\.\d{1,2}|\d{4}-\d{2}-\d{2}|明天|后天|当天|今天|本周)/
     );
     if (dateMatch) {
       const rawDate = dateMatch[2];
-      if (rawDate === '明天') {
+      if (rawDate === '当天' || rawDate === '今天') {
+        deadline = baseDate;
+      } else if (rawDate === '明天') {
         const d = new Date(baseDate);
         d.setDate(d.getDate() + 1);
         deadline = d.toISOString().split('T')[0];
@@ -241,6 +268,7 @@ export function parseTasksLocally(
         deadline = rawDate;
       }
     }
+
 
     let status: '未开始' | '进行中' | '已完成' = '未开始';
     let completedAt: string | null = null;
