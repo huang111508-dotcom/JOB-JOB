@@ -1,7 +1,18 @@
 import React from 'react';
-import { CheckCircle2, Clock, ListTodo, Archive, ChevronRight, Repeat } from 'lucide-react';
-import { TaskItem, ActiveTabType } from '../types';
+import {
+  Clock,
+  ListTodo,
+  Archive,
+  ChevronRight,
+  Repeat,
+  User,
+  LogOut,
+  Key,
+  ShieldAlert,
+} from 'lucide-react';
+import { TaskItem, ActiveTabType, UserAccount } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
+import { DEFAULT_USERNAME } from '../utils/authService';
 
 interface HeaderProps {
   tasks: TaskItem[];
@@ -9,6 +20,10 @@ interface HeaderProps {
   overdueCount?: number;
   activeTab?: ActiveTabType;
   onTabChange?: (tab: ActiveTabType) => void;
+  currentUser?: UserAccount | null;
+  onLogout?: () => void;
+  onChangePassword?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,29 +32,81 @@ export const Header: React.FC<HeaderProps> = ({
   overdueCount = 0,
   activeTab = 'active',
   onTabChange,
+  currentUser,
+  onLogout,
+  onChangePassword,
+  onOpenAdmin,
 }) => {
   const pendingCount = tasks.filter((t) => t.status === '未开始').length;
   const inProgressCount = tasks.filter((t) => t.status === '进行中').length;
   const completedCount = tasks.filter((t) => t.status === '已完成').length;
   const activeCount = pendingCount + inProgressCount;
+  const isDakbo = currentUser?.username?.toLowerCase() === DEFAULT_USERNAME.toLowerCase();
 
   return (
     <header className="border-b border-slate-200 bg-white">
       <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              任务追踪管理
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                任务追踪管理
+              </h1>
+              {currentUser && (
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 py-0.5 px-2.5 text-xs text-slate-700 font-medium border border-slate-200">
+                  <User className="h-3.5 w-3.5 text-blue-600" />
+                  <span>{currentUser.username}</span>
+                  {isDakbo && (
+                    <span className="rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.2 text-[10px] font-semibold">
+                      默认账号
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              待办敏捷跟踪 · 历史核销归档 · 固定周期管理
+              待办敏捷跟踪 · 历史核销归档 · 固定周期管理 · 多人独立记录
             </p>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center flex-wrap gap-2">
             <PWAInstallButton />
-            <span className="hidden sm:inline text-xs text-slate-400">
-              智能自然语言解析系统
-            </span>
+
+            {/* 后台管理入口 */}
+            {onOpenAdmin && (
+              <button
+                onClick={onOpenAdmin}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-blue-600 transition-colors cursor-pointer"
+                title="进入管理员后台（密码：admin888）"
+              >
+                <ShieldAlert className="h-3.5 w-3.5 text-blue-600" />
+                <span>后台管理</span>
+              </button>
+            )}
+
+            {/* 修改密码 */}
+            {onChangePassword && (
+              <button
+                onClick={onChangePassword}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-blue-600 transition-colors cursor-pointer"
+                title="修改当前账号密码"
+              >
+                <Key className="h-3.5 w-3.5 text-slate-500" />
+                <span>改密</span>
+              </button>
+            )}
+
+            {/* 切换账号 / 退出登录 */}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer"
+                title="退出当前账号并返回登录界面"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>退出</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -57,7 +124,9 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <div className="flex items-center gap-2 text-xs text-slate-700">
               <ListTodo className="h-4 w-4 text-blue-600" />
-              <span className="font-medium">主页待办任务总量</span>
+              <span className="font-medium">
+                {currentUser?.username ? `「${currentUser.username}」的待办任务总量` : '主页待办任务总量'}
+              </span>
               {overdueCount > 0 ? (
                 <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">
                   {overdueCount} 项已过期
@@ -146,4 +215,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-
